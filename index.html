@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>drop — p2p file transfer</title>
+<meta name="description" content="Send files directly browser-to-browser. No upload, no login, no server. Encrypted by default.">
+<meta property="og:title" content="drop — p2p file transfer">
+<meta property="og:description" content="Send files directly browser-to-browser. No upload, no login, no server.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<link href="https://unpkg.com/@tabler/icons-webfont@latest/tabler-icons.min.css" rel="stylesheet">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0b;
+    --surface: #131316;
+    --surface2: #1c1c21;
+    --border: rgba(255,255,255,0.07);
+    --border-hi: rgba(255,255,255,0.15);
+    --text: #f0f0f2;
+    --muted: #6b6b78;
+    --accent: #7c6dfa;
+    --accent-dim: rgba(124,109,250,0.15);
+    --green: #3ecf8e;
+    --green-dim: rgba(62,207,142,0.12);
+    --red: #f66;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2.5rem 1rem 4rem;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: var(--text);
+  }
+  .logo span { color: var(--accent); }
+  .tagline {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 520px;
+    margin-bottom: 1rem;
+  }
+
+  .card-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .role-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 1.5rem;
+    background: var(--bg);
+    padding: 4px;
+    border-radius: 10px;
+    border: 0.5px solid var(--border);
+  }
+  .tab {
+    flex: 1;
+    padding: 9px 0;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 7px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--sans);
+    transition: all 0.15s;
+  }
+  .tab.active {
+    background: var(--surface2);
+    color: var(--text);
+    border: 0.5px solid var(--border-hi);
+  }
+
+  #drop-zone {
+    border: 1.5px dashed var(--border-hi);
+    border-radius: 12px;
+    padding: 2.5rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+  }
+  #drop-zone.dragover, #drop-zone:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  #drop-zone i { font-size: 32px; color: var(--muted); display: block; margin-bottom: 10px; }
+  #drop-zone p { font-size: 14px; color: var(--muted); }
+  #drop-zone strong { color: var(--text); }
+  #file-input { display: none; }
+
+  .file-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface2);
+    border-radius: 10px;
+    margin-bottom: 1rem;
+    border: 0.5px solid var(--border);
+  }
+  .file-preview i { color: var(--accent); font-size: 20px; flex-shrink: 0; }
+  .file-info { flex: 1; min-width: 0; }
+  .file-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-size { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .file-preview .remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 4px; line-height: 1; }
+  .file-preview .remove:hover { color: var(--red); }
+
+  .offer-box {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    word-break: break-all;
+    line-height: 1.6;
+    max-height: 90px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    user-select: all;
+    cursor: text;
+  }
+
+  textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 0.5px solid var(--border-hi);
+    border-radius: 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 10px 12px;
+    resize: none;
+    outline: none;
+    line-height: 1.6;
+    transition: border-color 0.15s;
+  }
+  textarea:focus { border-color: var(--accent); }
+
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  button.primary:hover { opacity: 0.85; }
+  button.primary:active { transform: scale(0.97); }
+  button.primary:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+  button.secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 0.5px solid var(--border-hi);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button.secondary:hover { background: rgba(255,255,255,0.06); }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 1.3rem;
+    transition: opacity 0.2s;
+  }
+  .step:last-child { margin-bottom: 0; }
+  .step-num {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-dim);
+    border: 0.5px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-num.done { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .step-content { flex: 1; min-width: 0; }
+  .step-label { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+  .step-sub { color: var(--muted); font-weight: 400; font-size: 12px; display: block; margin-top: 1px; }
+
+  .progress-wrap {
+    background: var(--surface2);
+    border-radius: 100px;
+    height: 5px;
+    overflow: hidden;
+    margin: 8px 0;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 100px;
+    width: 0%;
+    transition: width 0.3s;
+  }
+  .progress-bar.done { background: var(--green); }
+
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-family: var(--mono);
+  }
+
+  .mt { margin-top: 10px; }
+  .mt2 { margin-top: 6px; }
+  .hidden { display: none !important; }
+  .dimmed { opacity: 0.38; pointer-events: none; }
+
+  .how-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .how-item {
+    background: var(--surface2);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .how-item strong { display: block; color: var(--text); margin-bottom: 3px; font-size: 13px; }
+  .how-item i { color: var(--accent); font-size: 18px; display: block; margin-bottom: 6px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: var(--mono);
+    padding: 3px 8px;
+    border-radius: 100px;
+    background: var(--green-dim);
+    color: var(--green);
+    margin-bottom: 12px;
+  }
+
+  .pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+
+  footer {
+    margin-top: 1.5rem;
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
+  }
+
+  @media (max-width: 480px) {
+    body { padding: 1.5rem 0.75rem 3rem; }
+    .how-grid { grid-template-columns: 1fr; }
+    .logo { font-size: 2rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">dr<span>op</span></div>
+  <div class="tagline">browser · to · browser · no upload · no login</div>
+</header>
+
+<div class="card">
+  <div class="badge"><i class="ti ti-shield-lock" style="font-size:11px"></i> end-to-end encrypted</div>
+
+  <div class="role-tabs">
+    <button class="tab active" onclick="switchMode('send')" id="tab-send">
+      <i class="ti ti-upload" style="font-size:13px; margin-right:4px" aria-hidden="true"></i> Send a file
+    </button>
+    <button class="tab" onclick="switchMode('receive')" id="tab-receive">
+      <i class="ti ti-download" style="font-size:13px; margin-right:4px" aria-hidden="true"></i> Receive a file
+    </button>
+  </div>
+
+  <!-- ── SEND PANEL ── -->
+  <div id="send-panel">
+
+    <div class="step" id="s1">
+      <div class="step-num" id="s1-num">1</div>
+      <div class="step-content">
+        <div class="step-label">Pick a file</div>
+        <div id="drop-zone" onclick="document.getElementById('file-input').click()" role="button" tabindex="0" aria-label="Click to pick a file or drag and drop">
+          <i class="ti ti-cloud-upload" aria-hidden="true"></i>
+          <p><strong>Click to browse</strong> or drag &amp; drop</p>
+          <p style="font-size:11px; margin-top:4px; color:var(--muted)">any file type · no size limit</p>
+        </div>
+        <input type="file" id="file-input" aria-label="File input">
+        <div id="file-preview-wrap" class="hidden"></div>
+      </div>
+    </div>
+
+    <div class="step dimmed" id="s2">
+      <div class="step-num" id="s2-num">2</div>
+      <div class="step-content">
+        <div class="step-label">Copy your offer code
+          <span class="step-sub">Share this with the receiver — paste it in chat, email, anything</span>
+        </div>
+        <div class="offer-box" id="offer-box" aria-label="Offer code">— pick a file first —</div>
+        <button class="primary" onclick="copyOffer()" id="copy-btn" disabled>
+          <i class="ti ti-copy" aria-hidden="true"></i> Copy offer code
+        </button>
+      </div>
+    </div>
+
+    <div class="step dimmed" id="s3">
+      <div class="step-num" id="s3-num">3</div>
+      <div class="step-content">
+        <div class="step-label">Paste the receiver's answer code</div>
+        <textarea id="answer-input" rows="3" placeholder="paste answer code here…" oninput="checkAnswer()" aria-label="Receiver answer code"></textarea>
+        <button class="primary mt" onclick="connectSender()" id="connect-btn" disabled>
+          <i class="ti ti-plug-connected" aria-hidden="true"></i> Connect &amp; send
+        </button>
+      </div>
+    </div>
+
+    <div class="step hidden" id="s4">
+      <div class="step-num done" id="s4-num"><i class="ti ti-refresh pulse" style="font-size:11px" aria-hidden="true"></i></div>
+      <div class="step-content">
+        <div class="step-label" id="s4-label">Transferring</div>
+        <div class="progress-wrap"><div class="progress-bar" id="send-progress" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div></div>
+        <div class="info-row">
+          <span id="send-status">Connecting…</span>
+          <span id="send-pct">0%</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── RECEIVE PANEL ── -->
+  <div id="receive-panel" class="hidden">
+
+    <div class="step">
+      <div class="step-num done">1</div>
+      <div class="step-content">
+        <div class="step-label">Paste the sender's offer code</div>
+        <textarea id="recv-offer-input" rows="3" placeholder="paste offer code here…" oninput="checkOffer()" aria-label="Sender offer code"></textarea>
+        <button class="primary mt" onclick="generateAnswer()" id="gen-answer-btn" disabled>
+          <i class="ti ti-qrcode" aria-hidden="true"></i> Generate answer code
+        </button>
+      </div>
+    </div>
+
+    <div class="step dimmed" id="r2">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <div class="step-label">Copy your answer code
+          <span class="step-sub">Send this back to the sender</span>
+        </div>
+        <div class="offer-box" id="answer-box" aria-label="Answer code">— paste the offer first —</div>
+        <button class="primary" onclick="copyAnswer()" id="copy-ans-btn" disabled>
+          <i class="ti ti-copy" aria-hidden="true"></i> Copy answer code
+        </button>
+      </div>
+    </div>
+
+    <div class="step hidden" id="r3">
+      <div class="step-num done" id="r3-num"><i class="ti ti-refresh pulse" style="font-size:11px" aria-hidden="true"></i></div>
+      <div class="step-content">
+        <div class="step-label" id="r3-label">Waiting for file</div>
+        <div class="progress-wrap"><div class="progress-bar" id="recv-progress" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div></div>
+        <div class="info-row">
+          <span id="recv-status">Connected — waiting for sender…</span>
+          <span id="recv-pct"></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- How it works -->
+<div class="card" style="max-width:520px">
+  <div class="card-title"><i class="ti ti-info-circle" aria-hidden="true"></i> how it works</div>
+  <div class="how-grid">
+    <div class="how-item">
+      <i class="ti ti-arrows-left-right" aria-hidden="true"></i>
+      <strong>Direct transfer</strong>
+      Files go browser → browser via WebRTC. Nothing touches a server.
+    </div>
+    <div class="how-item">
+      <i class="ti ti-shield-lock" aria-hidden="true"></i>
+      <strong>Encrypted</strong>
+      WebRTC uses DTLS-SRTP — encrypted by default, always.
+    </div>
+    <div class="how-item">
+      <i class="ti ti-user-off" aria-hidden="true"></i>
+      <strong>No account</strong>
+      No login, no tracking, no upload limits, no expiry.
+    </div>
+  </div>
+</div>
+
+<footer>drop · webrtc p2p · no server · open source</footer>
+
+<script>
+'use strict';
+
+const CHUNK = 64 * 1024;
+const STUN = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+
+let pc = null, dc = null, selectedFile = null;
+let recvBuffers = [], recvSize = 0, recvMeta = null;
+
+// ── mode switch ──
+function switchMode(mode) {
+  document.getElementById('send-panel').classList.toggle('hidden', mode !== 'send');
+  document.getElementById('receive-panel').classList.toggle('hidden', mode !== 'receive');
+  document.getElementById('tab-send').classList.toggle('active', mode === 'send');
+  document.getElementById('tab-receive').classList.toggle('active', mode !== 'send');
+  reset();
+}
+
+function reset() {
+  if (pc) { try { pc.close(); } catch(e){} pc = null; }
+  dc = null; selectedFile = null;
+  recvBuffers = []; recvSize = 0; recvMeta = null;
+}
+
+// ── drag/drop & file pick ──
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
+dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+function handleFile(file) {
+  if (!file) return;
+  selectedFile = file;
+  renderFilePreview(file);
+  enable('s2');
+  initSenderPC();
+}
+
+function renderFilePreview(file) {
+  const wrap = document.getElementById('file-preview-wrap');
+  wrap.innerHTML = `
+    <div class="file-preview mt2">
+      <i class="ti ${fileIcon(file.name)}" aria-hidden="true"></i>
+      <div class="file-info">
+        <div class="file-name">${esc(file.name)}</div>
+        <div class="file-size">${fmtBytes(file.size)}</div>
+      </div>
+      <button class="remove" onclick="clearFile()" aria-label="Remove file"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>`;
+  wrap.classList.remove('hidden');
+  dropZone.style.display = 'none';
+}
+
+function clearFile() {
+  selectedFile = null;
+  document.getElementById('file-preview-wrap').classList.add('hidden');
+  document.getElementById('file-preview-wrap').innerHTML = '';
+  dropZone.style.display = '';
+  fileInput.value = '';
+  dim('s2'); dim('s3');
+  document.getElementById('s4').classList.add('hidden');
+  document.getElementById('offer-box').textContent = '— pick a file first —';
+  document.getElementById('copy-btn').disabled = true;
+  if (pc) { try { pc.close(); } catch(e){} pc = null; }
+}
+
+// ── sender WebRTC ──
+async function initSenderPC() {
+  pc = new RTCPeerConnection({ iceServers: STUN });
+  dc = pc.createDataChannel('drop', { ordered: true });
+  dc.onopen = () => sendFile();
+  dc.onerror = e => setSendStatus('Error: ' + (e.error?.message || 'connection failed'), true);
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await gatherICE(pc);
+
+  document.getElementById('offer-box').textContent = btoa(JSON.stringify(pc.localDescription));
+  document.getElementById('copy-btn').disabled = false;
+}
+
+function gatherICE(p) {
+  return new Promise(res => {
+    if (p.iceGatheringState === 'complete') return res();
+    const done = () => { if (p.iceGatheringState === 'complete') { p.removeEventListener('icegatheringstatechange', done); res(); } };
+    p.addEventListener('icegatheringstatechange', done);
+    setTimeout(res, 5000);
+  });
+}
+
+function checkAnswer() {
+  document.getElementById('connect-btn').disabled = document.getElementById('answer-input').value.trim().length < 20;
+}
+
+async function connectSender() {
+  const raw = document.getElementById('answer-input').value.trim();
+  try {
+    const answer = JSON.parse(atob(raw));
+    await pc.setRemoteDescription(answer);
+    enable('s4');
+    document.getElementById('s4').classList.remove('hidden');
+  } catch(e) {
+    alert('Invalid answer code — make sure you pasted the full code from the receiver.');
+  }
+}
+
+async function sendFile() {
+  const file = selectedFile;
+  setSendStatus('Sending…');
+
+  dc.send(JSON.stringify({ name: file.name, size: file.size, type: file.type }));
+
+  const reader = file.stream().getReader();
+  let sent = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    let off = 0;
+    while (off < value.byteLength) {
+      while (dc.bufferedAmount > 8 * 1024 * 1024) await sleep(20);
+      const chunk = value.subarray(off, off + CHUNK);
+      dc.send(chunk);
+      off += chunk.byteLength;
+      sent += chunk.byteLength;
+      const pct = Math.round(sent / file.size * 100);
+      document.getElementById('send-progress').style.width = pct + '%';
+      document.getElementById('send-pct').textContent = pct + '%';
+      setSendStatus(`${fmtBytes(sent)} / ${fmtBytes(file.size)}`);
+    }
+  }
+
+  dc.send('__done__');
+  document.getElementById('send-progress').classList.add('done');
+  document.getElementById('send-progress').style.width = '100%';
+  document.getElementById('s4-num').innerHTML = '<i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i>';
+  document.getElementById('s4-label').textContent = 'Transfer complete';
+  setSendStatus('Done — file received on the other end.');
+  document.getElementById('send-pct').textContent = '100%';
+}
+
+function setSendStatus(msg, err) {
+  const el = document.getElementById('send-status');
+  el.textContent = msg;
+  el.style.color = err ? 'var(--red)' : '';
+}
+
+// ── receiver WebRTC ──
+function checkOffer() {
+  document.getElementById('gen-answer-btn').disabled = document.getElementById('recv-offer-input').value.trim().length < 20;
+}
+
+async function generateAnswer() {
+  const raw = document.getElementById('recv-offer-input').value.trim();
+  try {
+    const offer = JSON.parse(atob(raw));
+    pc = new RTCPeerConnection({ iceServers: STUN });
+
+    pc.ondatachannel = e => {
+      dc = e.channel;
+      dc.binaryType = 'arraybuffer';
+      dc.onmessage = onRecvMsg;
+      dc.onerror = err => setRecvStatus('Error: ' + (err.error?.message || 'connection failed'));
+      document.getElementById('r3').classList.remove('hidden');
+    };
+
+    await pc.setRemoteDescription(offer);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await gatherICE(pc);
+
+    document.getElementById('answer-box').textContent = btoa(JSON.stringify(pc.localDescription));
+    document.getElementById('copy-ans-btn').disabled = false;
+    enable('r2');
+  } catch(e) {
+    alert('Invalid offer code — paste the full code from the sender.');
+  }
+}
+
+function onRecvMsg(e) {
+  if (typeof e.data === 'string') {
+    if (e.data === '__done__') {
+      const blob = new Blob(recvBuffers, { type: recvMeta?.type || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: recvMeta?.name || 'download' });
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
+
+      document.getElementById('recv-progress').classList.add('done');
+      document.getElementById('recv-progress').style.width = '100%';
+      document.getElementById('recv-pct').textContent = '100%';
+      document.getElementById('r3-num').innerHTML = '<i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i>';
+      document.getElementById('r3-label').textContent = 'File received!';
+      setRecvStatus('Saved to your downloads — ' + (recvMeta?.name || 'file'));
+    } else {
+      try {
+        recvMeta = JSON.parse(e.data);
+        setRecvStatus(`Receiving: ${esc(recvMeta.name)} (${fmtBytes(recvMeta.size)})`);
+        document.getElementById('recv-pct').textContent = '0%';
+      } catch(err) {}
+    }
+  } else {
+    recvBuffers.push(e.data);
+    recvSize += e.data.byteLength;
+    if (recvMeta?.size) {
+      const pct = Math.round(recvSize / recvMeta.size * 100);
+      document.getElementById('recv-progress').style.width = pct + '%';
+      document.getElementById('recv-pct').textContent = pct + '%';
+      document.getElementById('recv-progress').setAttribute('aria-valuenow', pct);
+    }
+  }
+}
+
+function setRecvStatus(msg) { document.getElementById('recv-status').textContent = msg; }
+
+// ── copy helpers ──
+async function copyOffer() {
+  const txt = document.getElementById('offer-box').textContent;
+  await navigator.clipboard.writeText(txt);
+  const btn = document.getElementById('copy-btn');
+  btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Copied!';
+  enable('s3');
+  setTimeout(() => { btn.innerHTML = '<i class="ti ti-copy" aria-hidden="true"></i> Copy offer code'; }, 2000);
+}
+
+async function copyAnswer() {
+  const txt = document.getElementById('answer-box').textContent;
+  await navigator.clipboard.writeText(txt);
+  const btn = document.getElementById('copy-ans-btn');
+  btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Copied!';
+  setTimeout(() => { btn.innerHTML = '<i class="ti ti-copy" aria-hidden="true"></i> Copy answer code'; }, 2000);
+}
+
+// ── utils ──
+function enable(id) { const el = document.getElementById(id); if(el){ el.classList.remove('dimmed'); } }
+function dim(id)    { const el = document.getElementById(id); if(el){ el.classList.add('dimmed'); } }
+function sleep(ms)  { return new Promise(r => setTimeout(r, ms)); }
+function esc(s)     { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024**2) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1024**3) return (b/1024**2).toFixed(1) + ' MB';
+  return (b/1024**3).toFixed(2) + ' GB';
+}
+
+function fileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return ({
+    pdf:'ti-file-type-pdf', zip:'ti-file-zip', rar:'ti-file-zip', gz:'ti-file-zip', tar:'ti-file-zip',
+    mp4:'ti-movie', mkv:'ti-movie', mov:'ti-movie', avi:'ti-movie', webm:'ti-movie',
+    mp3:'ti-music', wav:'ti-music', flac:'ti-music', ogg:'ti-music',
+    jpg:'ti-photo', jpeg:'ti-photo', png:'ti-photo', gif:'ti-photo', webp:'ti-photo', svg:'ti-photo',
+    doc:'ti-file-word', docx:'ti-file-word',
+    xls:'ti-file-spreadsheet', xlsx:'ti-file-spreadsheet', csv:'ti-file-spreadsheet',
+    js:'ti-brand-javascript', ts:'ti-brand-typescript', py:'ti-brand-python',
+    txt:'ti-txt', md:'ti-markdown', json:'ti-braces',
+  })[ext] || 'ti-file';
+}
+</script>
+</body>
+</html>
