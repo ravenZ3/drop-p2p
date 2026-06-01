@@ -82,11 +82,13 @@ export async function createSenderPC(onProgress: (p: TransferProgress) => void, 
   };
 
   const connect = async (answerCode: string) => {
-    dc.onopen = () => sendFile(file!);
+    let sent = false;
+    const trySend = () => { if (!sent) { sent = true; sendFile(file!); } };
+    dc.onopen = trySend;
     const answer = JSON.parse(await decompress(answerCode)) as RTCSessionDescriptionInit;
     if (answer.type !== 'answer') throw new Error('That looks like an offer code, not an answer code. Make sure you copied the answer code from the receiver tab.');
     await pc.setRemoteDescription(answer);
-    if (dc.readyState === 'open') sendFile(file!);
+    if (dc.readyState === 'open') trySend();
   };
 
   let file: File | null = null;
@@ -114,7 +116,7 @@ export async function createReceiverPC(
     dc.onmessage = (ev: MessageEvent) => {
       if (typeof ev.data === 'string') {
         if (ev.data === '__done__') {
-          const blob = new Blob(recvBuffers, { type: recvMeta?.type ?? 'application/octet-stream' });
+          const blob = new Blob(recvBuffers, { type: recvMeta?.type || 'application/octet-stream' });
           onDone(blob, recvMeta?.name ?? 'download');
         } else {
           try {
