@@ -82,9 +82,11 @@ export async function createSenderPC(onProgress: (p: TransferProgress) => void, 
   };
 
   const connect = async (answerCode: string) => {
-    const answer = JSON.parse(await decompress(answerCode)) as RTCSessionDescriptionInit;
-    await pc.setRemoteDescription(answer);
     dc.onopen = () => sendFile(file!);
+    const answer = JSON.parse(await decompress(answerCode)) as RTCSessionDescriptionInit;
+    if (answer.type !== 'answer') throw new Error('That looks like an offer code, not an answer code. Make sure you copied the answer code from the receiver tab.');
+    await pc.setRemoteDescription(answer);
+    if (dc.readyState === 'open') sendFile(file!);
   };
 
   let file: File | null = null;
@@ -131,6 +133,7 @@ export async function createReceiverPC(
   };
 
   const offer = JSON.parse(await decompress(offerCode)) as RTCSessionDescriptionInit;
+  if (offer.type !== 'offer') throw new Error('That looks like an answer code, not an offer code. Make sure you copied the offer code from the sender tab.');
   await pc.setRemoteDescription(offer);
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);

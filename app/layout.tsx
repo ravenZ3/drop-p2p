@@ -2,10 +2,10 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'drop — p2p file transfer',
+  title: 'drop: p2p file transfer',
   description: 'Send files directly browser-to-browser. No upload, no login, no server. Encrypted by default.',
   openGraph: {
-    title: 'drop — p2p file transfer',
+    title: 'drop: p2p file transfer',
     description: 'Send files directly browser-to-browser. No upload, no login, no server.',
   },
 };

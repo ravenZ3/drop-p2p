@@ -1,140 +1,172 @@
 'use client';
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { createSenderPC, createReceiverPC, type FileMeta, type TransferProgress } from '@/lib/webrtc';
-import { fmtBytes, fileIcon, esc } from '@/lib/utils';
+import { createSession, fetchSession, submitAnswer, pollForAnswer } from '@/lib/signal';
+import { fmtBytes, fileIcon } from '@/lib/utils';
 
 type Mode = 'send' | 'receive';
 
-interface SendState {
-  offerCode: string | null;
-  copied: boolean;
-  answerInput: string;
-  progress: TransferProgress | null;
-  done: boolean;
-  status: string;
-  error: string | null;
-}
+type SendPhase = 'idle' | 'connecting' | 'code-ready' | 'waiting' | 'transferring' | 'done' | 'error';
+type RecvPhase = 'idle' | 'fetching' | 'ready' | 'receiving' | 'done' | 'error';
 
-interface ReceiveState {
-  offerInput: string;
-  answerCode: string | null;
-  copied: boolean;
-  meta: FileMeta | null;
-  progress: TransferProgress | null;
-  done: boolean;
-  status: string;
-  error: string | null;
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard) {
+    try { await navigator.clipboard.writeText(text); return; } catch (_) {}
+  }
+  const ta = Object.assign(document.createElement('textarea'), { value: text });
+  ta.style.cssText = 'position:fixed;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
 }
 
 export default function DropApp() {
   const [mode, setMode] = useState<Mode>('send');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [dragover, setDragover] = useState(false);
 
-  const [send, setSend] = useState<SendState>({
-    offerCode: null, copied: false, answerInput: '',
-    progress: null, done: false, status: '', error: null,
-  });
-  const [recv, setRecv] = useState<ReceiveState>({
-    offerInput: '', answerCode: null, copied: false,
-    meta: null, progress: null, done: false, status: 'Connected — waiting for sender…', error: null,
-  });
+  // send state
+  const [file, setFile] = useState<File | null>(null);
+  const [dragover, setDragover] = useState(false);
+  const [sendPhase, setSendPhase] = useState<SendPhase>('idle');
+  const [code, setCode] = useState('');
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [sendProgress, setSendProgress] = useState<TransferProgress | null>(null);
+  const [sendStatus, setSendStatus] = useState('');
+  const [sendError, setSendError] = useState('');
+
+  // receive state
+  const [codeInput, setCodeInput] = useState('');
+  const [recvPhase, setRecvPhase] = useState<RecvPhase>('idle');
+  const [recvMeta, setRecvMeta] = useState<FileMeta | null>(null);
+  const [recvProgress, setRecvProgress] = useState<TransferProgress | null>(null);
+  const [recvStatus, setRecvStatus] = useState('');
+  const [recvError, setRecvError] = useState('');
 
   const senderRef = useRef<Awaited<ReturnType<typeof createSenderPC>> | null>(null);
-  const receiverRef = useRef<{ answerCode: string; close: () => void } | null>(null);
+  const stopPollRef = useRef<(() => void) | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const resetSender = useCallback(() => {
+  const resetSend = useCallback(() => {
+    stopPollRef.current?.();
     senderRef.current?.close();
     senderRef.current = null;
-    setSelectedFile(null);
-    setSend({ offerCode: null, copied: false, answerInput: '', progress: null, done: false, status: '', error: null });
+    stopPollRef.current = null;
+    setFile(null);
+    setSendPhase('idle');
+    setCode('');
+    setCodeCopied(false);
+    setSendProgress(null);
+    setSendStatus('');
+    setSendError('');
   }, []);
 
-  const resetReceiver = useCallback(() => {
-    receiverRef.current?.close();
-    receiverRef.current = null;
-    setRecv({ offerInput: '', answerCode: null, copied: false, meta: null, progress: null, done: false, status: 'Connected — waiting for sender…', error: null });
+  const resetRecv = useCallback(() => {
+    setCodeInput('');
+    setRecvPhase('idle');
+    setRecvMeta(null);
+    setRecvProgress(null);
+    setRecvStatus('');
+    setRecvError('');
   }, []);
 
-  const switchMode = (m: Mode) => {
-    setMode(m);
-    resetSender();
-    resetReceiver();
+  // auto-generate offer + session when file is picked
+  useEffect(() => {
+    if (!file) return;
+    let cancelled = false;
+
+    (async () => {
+      setSendPhase('connecting');
+      try {
+        const sender = await createSenderPC(
+          p => { setSendProgress(p); setSendStatus(`${fmtBytes(p.sent)} / ${fmtBytes(p.total)}`); },
+          () => setSendPhase('done'),
+          msg => { setSendError(msg); setSendPhase('error'); },
+        );
+        if (cancelled) { sender.close(); return; }
+        sender.setFile(file);
+        senderRef.current = sender;
+
+        const sessionCode = await createSession(sender.offerCode);
+        if (cancelled) return;
+
+        setCode(sessionCode);
+        setSendPhase('code-ready');
+
+        const stop = pollForAnswer(
+          sessionCode,
+          async answer => {
+            if (cancelled) return;
+            setSendPhase('waiting');
+            try {
+              await senderRef.current?.connect(answer);
+              setSendPhase('transferring');
+            } catch (e) {
+              setSendError(e instanceof Error ? e.message : String(e));
+              setSendPhase('error');
+            }
+          },
+          msg => { setSendError(msg); setSendPhase('error'); },
+        );
+        stopPollRef.current = stop;
+      } catch (e) {
+        if (!cancelled) {
+          setSendError(e instanceof Error ? e.message : String(e));
+          setSendPhase('error');
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [file]);
+
+  const handleFile = (f: File) => {
+    resetSend();
+    setFile(f);
   };
 
-  // ── file handling ──
-  const handleFile = async (file: File) => {
-    setSelectedFile(file);
-    senderRef.current?.close();
-
-    const sender = await createSenderPC(
-      p => setSend(s => ({ ...s, progress: p, status: `${fmtBytes(p.sent)} / ${fmtBytes(p.total)}` })),
-      () => setSend(s => ({ ...s, done: true, status: 'Done — file received on the other end.' })),
-      msg => setSend(s => ({ ...s, error: msg })),
-    );
-    sender.setFile(file);
-    senderRef.current = sender;
-    setSend(s => ({ ...s, offerCode: sender.offerCode }));
+  const copyCode = async () => {
+    await copyToClipboard(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
   };
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragover(false);
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-  };
-
-  // ── sender actions ──
-  const copyOffer = async () => {
-    if (!send.offerCode) return;
-    await navigator.clipboard.writeText(send.offerCode);
-    setSend(s => ({ ...s, copied: true }));
-    setTimeout(() => setSend(s => ({ ...s, copied: false })), 2000);
-  };
-
-  const connectSender = async () => {
+  // receive: fetch offer by code and generate answer
+  const joinSession = async () => {
+    const trimmed = codeInput.trim().toLowerCase();
+    setRecvPhase('fetching');
     try {
-      await senderRef.current?.connect(send.answerInput.trim());
-      setSend(s => ({ ...s, status: 'Connecting…' }));
-    } catch {
-      setSend(s => ({ ...s, error: 'Invalid answer code — make sure you pasted the full code from the receiver.' }));
-    }
-  };
+      const { offer } = await fetchSession(trimmed);
+      if (!offer) { setRecvError('Session not found or expired.'); setRecvPhase('error'); return; }
 
-  // ── receiver actions ──
-  const generateAnswer = async () => {
-    try {
       const receiver = await createReceiverPC(
-        recv.offerInput.trim(),
-        meta => setRecv(s => ({ ...s, meta, status: `Receiving: ${esc(meta.name)} (${fmtBytes(meta.size)})` })),
-        p => setRecv(s => ({ ...s, progress: p })),
+        offer,
+        meta => { setRecvMeta(meta); setRecvStatus(`Receiving: ${meta.name} (${fmtBytes(meta.size)})`); },
+        p => setRecvProgress(p),
         (blob, name) => {
           const url = URL.createObjectURL(blob);
           const a = Object.assign(document.createElement('a'), { href: url, download: name });
-          document.body.appendChild(a);
-          a.click();
+          document.body.appendChild(a); a.click();
           setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
-          setRecv(s => ({ ...s, done: true, status: `Saved to your downloads — ${name}` }));
+          setRecvPhase('done');
+          setRecvStatus(`Saved — ${name}`);
         },
-        msg => setRecv(s => ({ ...s, error: msg })),
+        msg => { setRecvError(msg); setRecvPhase('error'); },
       );
-      receiverRef.current = receiver;
-      setRecv(s => ({ ...s, answerCode: receiver.answerCode }));
-    } catch {
-      setRecv(s => ({ ...s, error: 'Invalid offer code — paste the full code from the sender.' }));
+
+      await submitAnswer(trimmed, receiver.answerCode);
+      setRecvPhase('receiving');
+      setRecvStatus('Waiting for sender to connect…');
+    } catch (e) {
+      setRecvError(e instanceof Error ? e.message : String(e));
+      setRecvPhase('error');
     }
   };
 
-  const copyAnswer = async () => {
-    if (!recv.answerCode) return;
-    await navigator.clipboard.writeText(recv.answerCode);
-    setRecv(s => ({ ...s, copied: true }));
-    setTimeout(() => setRecv(s => ({ ...s, copied: false })), 2000);
-  };
+  const switchMode = (m: Mode) => setMode(m);
 
-  // ── render ──
-  const transferring = send.progress !== null || send.done;
+  const sendPct = sendPhase === 'done' ? 100 : sendProgress?.pct ?? 0;
+  const recvPct = recvPhase === 'done' ? 100 : recvProgress?.pct ?? 0;
 
   return (
     <>
@@ -162,17 +194,21 @@ export default function DropApp() {
           <div>
             {/* Step 1: pick file */}
             <div className="step">
-              <div className="step-num">1</div>
+              <div className={`step-num ${sendPhase !== 'idle' ? 'done' : ''}`}>
+                {sendPhase !== 'idle'
+                  ? <i className="ti ti-check" style={{ fontSize: 12 }} />
+                  : '1'}
+              </div>
               <div className="step-content">
                 <div className="step-label">Pick a file</div>
-                {selectedFile ? (
+                {file ? (
                   <div className="file-preview mt2">
-                    <i className={`ti ${fileIcon(selectedFile.name)}`} />
+                    <i className={`ti ${fileIcon(file.name)}`} />
                     <div className="file-info">
-                      <div className="file-name">{selectedFile.name}</div>
-                      <div className="file-size">{fmtBytes(selectedFile.size)}</div>
+                      <div className="file-name">{file.name}</div>
+                      <div className="file-size">{fmtBytes(file.size)}</div>
                     </div>
-                    <button className="remove" onClick={resetSender} aria-label="Remove file">
+                    <button className="remove" onClick={resetSend} aria-label="Remove file">
                       <i className="ti ti-x" />
                     </button>
                   </div>
@@ -182,157 +218,138 @@ export default function DropApp() {
                     onClick={() => fileInputRef.current?.click()}
                     onDragOver={e => { e.preventDefault(); setDragover(true); }}
                     onDragLeave={() => setDragover(false)}
-                    onDrop={onDrop}
-                    role="button"
-                    tabIndex={0}
+                    onDrop={e => { e.preventDefault(); setDragover(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
+                    role="button" tabIndex={0}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
-                    aria-label="Click to pick a file or drag and drop"
                   >
                     <i className="ti ti-cloud-upload" />
                     <p><strong>Click to browse</strong> or drag &amp; drop</p>
                     <p style={{ fontSize: 11, marginTop: 4, color: 'var(--muted)' }}>any file type · no size limit</p>
                   </div>
                 )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  style={{ display: 'none' }}
-                  onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
-                />
+                <input ref={fileInputRef} type="file" style={{ display: 'none' }}
+                  onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
               </div>
             </div>
 
-            {/* Step 2: copy offer */}
-            <div className={`step ${!send.offerCode ? 'dimmed' : ''}`}>
-              <div className="step-num">2</div>
+            {/* Step 2: share code */}
+            <div className={`step ${sendPhase === 'idle' ? 'dimmed' : ''}`}>
+              <div className={`step-num ${sendPhase === 'code-ready' || sendPhase === 'waiting' || sendPhase === 'transferring' || sendPhase === 'done' ? 'done' : ''}`}>
+                {sendPhase === 'connecting'
+                  ? <i className="ti ti-refresh pulse" style={{ fontSize: 11 }} />
+                  : sendPhase === 'code-ready' || sendPhase === 'waiting' || sendPhase === 'transferring' || sendPhase === 'done'
+                  ? <i className="ti ti-check" style={{ fontSize: 12 }} />
+                  : '2'}
+              </div>
               <div className="step-content">
                 <div className="step-label">
-                  Copy your offer code
-                  <span className="step-sub">Share this with the receiver — paste it in chat, email, anything</span>
+                  Share this code
+                  <span className="step-sub">Send it to the receiver — they&apos;ll enter it to connect</span>
                 </div>
-                <div className="offer-box">{send.offerCode ?? '— pick a file first —'}</div>
-                <button className="primary" onClick={copyOffer} disabled={!send.offerCode}>
-                  <i className={`ti ${send.copied ? 'ti-check' : 'ti-copy'}`} />
-                  {send.copied ? 'Copied!' : 'Copy offer code'}
+                {sendPhase === 'connecting' ? (
+                  <div className="offer-box" style={{ color: 'var(--muted)' }}>generating…</div>
+                ) : (
+                  <div className="offer-box" style={{ fontSize: 22, fontFamily: 'var(--mono)', letterSpacing: '0.08em', color: 'var(--text)', textAlign: 'center', padding: '14px 12px' }}>
+                    {code || '—'}
+                  </div>
+                )}
+                <button className="primary" onClick={copyCode} disabled={!code}>
+                  <i className={`ti ${codeCopied ? 'ti-check' : 'ti-copy'}`} />
+                  {codeCopied ? 'Copied!' : 'Copy code'}
                 </button>
               </div>
             </div>
 
-            {/* Step 3: paste answer */}
-            <div className={`step ${!send.copied && !send.answerInput ? 'dimmed' : ''}`}>
-              <div className="step-num">3</div>
-              <div className="step-content">
-                <div className="step-label">Paste the receiver&apos;s answer code</div>
-                <textarea
-                  rows={3}
-                  placeholder="paste answer code here…"
-                  value={send.answerInput}
-                  onChange={e => setSend(s => ({ ...s, answerInput: e.target.value }))}
-                  aria-label="Receiver answer code"
-                />
-                {send.error && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>{send.error}</p>}
-                <button
-                  className="primary mt"
-                  onClick={connectSender}
-                  disabled={send.answerInput.trim().length < 20}
-                >
-                  <i className="ti ti-plug-connected" /> Connect &amp; send
-                </button>
-              </div>
-            </div>
-
-            {/* Step 4: transfer */}
-            {transferring && (
+            {/* Step 3: status */}
+            {(sendPhase === 'waiting' || sendPhase === 'transferring' || sendPhase === 'done' || sendPhase === 'error') && (
               <div className="step">
                 <div className="step-num done">
-                  {send.done
+                  {sendPhase === 'done'
                     ? <i className="ti ti-check" style={{ fontSize: 12 }} />
+                    : sendPhase === 'error'
+                    ? <i className="ti ti-x" style={{ fontSize: 12 }} />
                     : <i className="ti ti-refresh pulse" style={{ fontSize: 11 }} />}
                 </div>
                 <div className="step-content">
-                  <div className="step-label">{send.done ? 'Transfer complete' : 'Transferring'}</div>
-                  <div className="progress-wrap">
-                    <div
-                      className={`progress-bar ${send.done ? 'done' : ''}`}
-                      style={{ width: `${send.done ? 100 : (send.progress?.pct ?? 0)}%` }}
-                      role="progressbar"
-                      aria-valuenow={send.progress?.pct ?? 0}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                    />
+                  <div className="step-label">
+                    {sendPhase === 'waiting' ? 'Waiting for receiver…'
+                      : sendPhase === 'transferring' ? 'Transferring'
+                      : sendPhase === 'done' ? 'Transfer complete'
+                      : 'Error'}
                   </div>
-                  <div className="info-row">
-                    <span style={{ color: send.error ? 'var(--red)' : undefined }}>{send.status}</span>
-                    <span>{send.done ? '100%' : `${send.progress?.pct ?? 0}%`}</span>
-                  </div>
+                  {(sendPhase === 'transferring' || sendPhase === 'done') && (
+                    <>
+                      <div className="progress-wrap">
+                        <div className={`progress-bar ${sendPhase === 'done' ? 'done' : ''}`}
+                          style={{ width: `${sendPct}%` }} role="progressbar"
+                          aria-valuenow={sendPct} aria-valuemin={0} aria-valuemax={100} />
+                      </div>
+                      <div className="info-row">
+                        <span>{sendPhase === 'done' ? 'Done — file received on the other end.' : sendStatus}</span>
+                        <span>{sendPct}%</span>
+                      </div>
+                    </>
+                  )}
+                  {sendPhase === 'error' && (
+                    <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{sendError}</p>
+                  )}
                 </div>
               </div>
             )}
           </div>
         ) : (
           <div>
-            {/* Step 1: paste offer */}
+            {/* Step 1: enter code */}
             <div className="step">
-              <div className="step-num done">1</div>
+              <div className={`step-num ${recvPhase !== 'idle' && recvPhase !== 'error' ? 'done' : ''}`}>
+                {recvPhase !== 'idle' && recvPhase !== 'error'
+                  ? <i className="ti ti-check" style={{ fontSize: 12 }} />
+                  : '1'}
+              </div>
               <div className="step-content">
-                <div className="step-label">Paste the sender&apos;s offer code</div>
-                <textarea
-                  rows={3}
-                  placeholder="paste offer code here…"
-                  value={recv.offerInput}
-                  onChange={e => setRecv(s => ({ ...s, offerInput: e.target.value }))}
-                  aria-label="Sender offer code"
+                <div className="step-label">Enter the sender&apos;s code</div>
+                <input
+                  type="text"
+                  placeholder="fox-green-apple"
+                  value={codeInput}
+                  onChange={e => setCodeInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && codeInput.trim().length > 3) joinSession(); }}
+                  disabled={recvPhase !== 'idle' && recvPhase !== 'error'}
+                  style={{
+                    width: '100%', background: 'var(--bg)', border: '0.5px solid var(--border-hi)',
+                    borderRadius: 10, color: 'var(--text)', fontFamily: 'var(--mono)',
+                    fontSize: 18, padding: '10px 12px', outline: 'none', letterSpacing: '0.06em',
+                    marginBottom: 10,
+                  }}
                 />
-                {recv.error && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>{recv.error}</p>}
-                <button
-                  className="primary mt"
-                  onClick={generateAnswer}
-                  disabled={recv.offerInput.trim().length < 20}
-                >
-                  <i className="ti ti-qrcode" /> Generate answer code
+                {recvError && <p style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{recvError}</p>}
+                <button className="primary" onClick={joinSession}
+                  disabled={codeInput.trim().length < 4 || (recvPhase !== 'idle' && recvPhase !== 'error')}>
+                  {recvPhase === 'fetching'
+                    ? <><i className="ti ti-refresh pulse" /> Connecting…</>
+                    : <><i className="ti ti-plug-connected" /> Connect</>}
                 </button>
               </div>
             </div>
 
-            {/* Step 2: copy answer */}
-            <div className={`step ${!recv.answerCode ? 'dimmed' : ''}`}>
-              <div className="step-num">2</div>
-              <div className="step-content">
-                <div className="step-label">
-                  Copy your answer code
-                  <span className="step-sub">Send this back to the sender</span>
-                </div>
-                <div className="offer-box">{recv.answerCode ?? '— paste the offer first —'}</div>
-                <button className="primary" onClick={copyAnswer} disabled={!recv.answerCode}>
-                  <i className={`ti ${recv.copied ? 'ti-check' : 'ti-copy'}`} />
-                  {recv.copied ? 'Copied!' : 'Copy answer code'}
-                </button>
-              </div>
-            </div>
-
-            {/* Step 3: receive */}
-            {recv.answerCode && (
+            {/* Step 2: receive */}
+            {(recvPhase === 'receiving' || recvPhase === 'done') && (
               <div className="step">
                 <div className="step-num done">
-                  {recv.done
+                  {recvPhase === 'done'
                     ? <i className="ti ti-check" style={{ fontSize: 12 }} />
                     : <i className="ti ti-refresh pulse" style={{ fontSize: 11 }} />}
                 </div>
                 <div className="step-content">
-                  <div className="step-label">{recv.done ? 'File received!' : 'Waiting for file'}</div>
+                  <div className="step-label">{recvPhase === 'done' ? 'File received!' : recvMeta ? `Receiving ${recvMeta.name}` : 'Waiting for file'}</div>
                   <div className="progress-wrap">
-                    <div
-                      className={`progress-bar ${recv.done ? 'done' : ''}`}
-                      style={{ width: `${recv.done ? 100 : (recv.progress?.pct ?? 0)}%` }}
-                      role="progressbar"
-                      aria-valuenow={recv.progress?.pct ?? 0}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                    />
+                    <div className={`progress-bar ${recvPhase === 'done' ? 'done' : ''}`}
+                      style={{ width: `${recvPct}%` }} role="progressbar"
+                      aria-valuenow={recvPct} aria-valuemin={0} aria-valuemax={100} />
                   </div>
                   <div className="info-row">
-                    <span>{recv.status}</span>
-                    <span>{recv.done ? '100%' : recv.progress ? `${recv.progress.pct}%` : ''}</span>
+                    <span>{recvStatus}</span>
+                    <span>{recvPct ? `${recvPct}%` : ''}</span>
                   </div>
                 </div>
               </div>
@@ -348,12 +365,12 @@ export default function DropApp() {
           <div className="how-item">
             <i className="ti ti-arrows-left-right" />
             <strong>Direct transfer</strong>
-            Files go browser → browser via WebRTC. Nothing touches a server.
+            Files go browser to browser via WebRTC. Nothing touches a server.
           </div>
           <div className="how-item">
             <i className="ti ti-shield-lock" />
             <strong>Encrypted</strong>
-            WebRTC uses DTLS-SRTP — encrypted by default, always.
+            WebRTC uses DTLS-SRTP, encrypted by default, always.
           </div>
           <div className="how-item">
             <i className="ti ti-user-off" />
